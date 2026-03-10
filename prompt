@@ -155,9 +155,17 @@ _set_prompt() {
   PS1="$_ssh_PS1\n$working_dir\n$venv_icons$_green_arrow$git_branch_PS1$_white_text"
 }
 
-# Invalidate cache (call after git clone, init, etc)
+# Invalidate cache for current directory
 _prompt_cache_invalidate() {
   unset "_dir_cache[$PWD]"
+}
+
+# Wrap git to invalidate cache on repo-creating commands
+git() {
+  command git "$@"
+  local ret=$?
+  [[ "$1" =~ ^(init|clone)$ ]] && _prompt_cache_invalidate
+  return $ret
 }
 
 PROMPT_COMMAND="_set_prompt"
