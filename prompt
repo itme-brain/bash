@@ -1,139 +1,163 @@
-# Detect graphical environment for icons
-_has_graphics() {
-  [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]
-}
+# Detect graphical environment once at source time
+if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+  _gfx=1
+  _py_sym=$'\ue73c'
+  _js_sym=$'\ue781'
+  _nix_sym=$'\ue843'
+  _proj_sym=$'\ueb45 '
+  _branch_sym=$'\uf418'
+else
+  _gfx=""
+  _py_sym="py"
+  _js_sym="js"
+  _nix_sym="nix"
+  _proj_sym="../"
+  _branch_sym=""
+fi
 
-check_ssh() {
-  if [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ]; then
-    ssh_PS1="\n\[\033[01;37m\]\u@\h:\[\033[00m\]\n"
-    return 0
-  fi
-}
+# Pre-compute colored icons
+_python_icon="\[\033[01;33m\]$_py_sym\[\033[00m\]"
+_node_icon="\[\033[01;93m\]$_js_sym\[\033[00m\]"
+_nix_icon="\[\033[01;34m\]$_nix_sym\[\033[00m\]"
 
-# Git-related functions (only if git available)
-if command -v git &>/dev/null; then
+# SSH check once at source time
+if [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ]; then
+  _ssh_PS1="\n\[\033[01;37m\]\u@\h:\[\033[00m\]\n"
+else
+  _ssh_PS1=""
+fi
 
-check_venv() {
-  add_icon() {
-    local icon=$1
-    if [[ ! $venv_icons =~ $icon ]]; then
-      venv_icons+="$icon "
+# Static prompt parts
+_green_arrow="\[\033[01;32m\]>> "
+_white_text="\[\033[00m\]"
+
+# Cache: dir -> "git_root|superproject|" or "-" for non-git
+declare -A _dir_cache
+
+# Find git root by walking up (no git spawn)
+_find_git_root() {
+  local dir="$PWD"
+  while [ -n "$dir" ]; do
+    if [ -e "$dir/.git" ]; then
+      _git_root="$dir"
+      return 0
     fi
-  }
-
-  remove_icon() {
-    local icon=$1
-    venv_icons=${venv_icons//$icon/}
-  }
-
-  if _has_graphics; then
-    py=""
-    js="󰌞"
-    nix=""
-  else
-    py="py"
-    js="js"
-    nix="nix"
-  fi
-
-  python_icon="\[\033[01;33m\]$py\[\033[00m\]"
-  node_icon="\[\033[01;93m\]$js\[\033[00m\]"
-  nix_icon="\[\033[01;34m\]$nix\[\033[00m\]"
-
-  if [ -n "$IN_NIX_SHELL" ]; then
-    add_icon "$nix_icon"
-  else
-    remove_icon "$nix_icon"
-  fi
-
-  if [ -n "$VIRTUAL_ENV" ]; then
-    add_icon "$python_icon"
-  else
-    remove_icon "$python_icon"
-  fi
-
-  if [ -d "${git_root}/node_modules" ]; then
-    add_icon "$node_icon"
-  else
-    remove_icon "$node_icon"
-  fi
+    dir="${dir%/*}"
+  done
+  return 1
 }
 
-set_git_dir() {
-  if _has_graphics; then
-    project_icon=" "
-  else
-    project_icon="../"
-  fi
-
-  local superproject_root=$(git rev-parse --show-superproject-working-tree 2>/dev/null)
-  if [[ -n "$superproject_root" ]]; then
-    local submodule_name=$(basename "$git_root")
-    working_dir="\[\033[01;34m\]$project_icon${superproject_root##*/}/$submodule_name$git_curr_dir\[\033[00m\]"
-  elif [ "$git_curr_dir" == "." ]; then
-    working_dir="\[\033[01;34m\]$project_icon$git_root_dir\[\033[00m\]"
-    return 0
-  else
-    working_dir="\[\033[01;34m\]$project_icon$git_root_dir$git_curr_dir\[\033[00m\]"
-    return 0
-  fi
-}
-
-relative_path() {
-  local absolute_target=$(readlink -f "$1")
-  local absolute_base=$(readlink -f "$2")
-  echo "${absolute_target#$absolute_base}"
-}
-
-check_project() {
-  git_root=$(git rev-parse --show-toplevel 2>/dev/null)
-
-  if [ -n "$git_root" ]; then
-    git_branch=$(git branch --show-current 2>/dev/null)
-
-    if [ -z "$git_branch" ]; then
-      git_branch=$(git describe --tags --exact-match 2>/dev/null)
-      git_branch=${git_branch:-$(git rev-parse --short HEAD 2>/dev/null)}
+# Find superproject by walking up from git root
+_find_superproject() {
+  local dir="${_git_root%/*}"
+  _superproject=""
+  while [ -n "$dir" ]; do
+    if [ -e "$dir/.git" ]; then
+      _superproject="$dir"
+      return 0
     fi
+    dir="${dir%/*}"
+  done
+  return 1
+}
 
-    git_curr_dir=$(relative_path "." "$git_root")
-    git_root_dir=$(basename "$git_root")
+# Read branch from .git/HEAD (no git spawn)
+_read_branch() {
+  local git_dir="$_git_root/.git"
+  local head_file
 
-    if _has_graphics; then
-      git_branch_PS1="\[\033[01;31m\]$git_branch 󰘬:\[\033[00m\]"
+  # Submodule: .git is a file with "gitdir: <path>"
+  if [ -f "$git_dir" ]; then
+    read -r _ head_file < "$git_dir"
+    head_file="$head_file/HEAD"
+  else
+    head_file="$git_dir/HEAD"
+  fi
+
+  [ -f "$head_file" ] || return 1
+
+  local head
+  read -r head < "$head_file"
+
+  if [[ "$head" == "ref: refs/heads/"* ]]; then
+    _git_branch="${head#ref: refs/heads/}"
+  else
+    # Detached HEAD - short hash
+    _git_branch="${head:0:7}"
+  fi
+}
+
+# Build venv icons (must run every prompt - env can change)
+_build_venv_icons() {
+  venv_icons=""
+  [ -n "$IN_NIX_SHELL" ] && venv_icons+="$_nix_icon "
+  [ -n "$VIRTUAL_ENV" ] && venv_icons+="$_python_icon "
+  [ -d "$_git_root/node_modules" ] && venv_icons+="$_node_icon "
+}
+
+# Main prompt logic
+_set_prompt() {
+  local cached="${_dir_cache[$PWD]}"
+
+  # Check cache
+  if [ -z "$cached" ]; then
+    if _find_git_root; then
+      _find_superproject
+      _dir_cache[$PWD]="$_git_root|$_superproject|"
     else
-      git_branch_PS1="\[\033[01;31m\]$git_branch:\[\033[00m\]"
+      _dir_cache[$PWD]="-"
+      cached="-"
     fi
-
-    set_git_dir
-    check_venv
-
-    return 0
   fi
-}
 
-fi  # end git check
+  # Non-git directory
+  if [ "$cached" = "-" ] || [ "${_dir_cache[$PWD]}" = "-" ]; then
+    venv_icons=""
+    [ -n "$IN_NIX_SHELL" ] && venv_icons+="$_nix_icon "
+    [ -n "$VIRTUAL_ENV" ] && venv_icons+="$_python_icon "
+    PS1="$_ssh_PS1\n\[\033[01;34m\]\w\[\033[00m\]\n$venv_icons$_green_arrow$_white_text"
+    return
+  fi
 
-set_prompt() {
-  local green_arrow="\[\033[01;32m\]>> "
-  local white_text="\[\033[00m\]"
-  local working_dir="\[\033[01;34m\]\w\[\033[00m\]"
+  # Parse cache
+  [ -z "$cached" ] && cached="${_dir_cache[$PWD]}"
+  IFS='|' read -r _git_root _superproject _ <<< "$cached"
 
-  local ssh_PS1
+  # Get branch (can change without cd)
+  _read_branch
 
-  check_ssh
+  # Build paths using bash string ops (no readlink spawn)
+  local git_curr_dir="${PWD#$_git_root}"
+  local git_root_dir="${_git_root##*/}"
 
-  if command -v git &>/dev/null; then
-    local venv_icons
-    local git_branch_PS1
-
-    check_project
-
-    PS1="$ssh_PS1\n$working_dir\n$venv_icons$green_arrow$git_branch_PS1$white_text"
+  # Build working_dir
+  local working_dir
+  if [ -n "$_superproject" ]; then
+    local super_name="${_superproject##*/}"
+    working_dir="\[\033[01;34m\]$_proj_sym$super_name/$git_root_dir$git_curr_dir\[\033[00m\]"
+  elif [ -z "$git_curr_dir" ]; then
+    working_dir="\[\033[01;34m\]$_proj_sym$git_root_dir\[\033[00m\]"
   else
-    PS1="$ssh_PS1\n$working_dir\n$green_arrow$white_text"
+    working_dir="\[\033[01;34m\]$_proj_sym$git_root_dir$git_curr_dir\[\033[00m\]"
   fi
-  return 0
+
+  # Build branch PS1
+  local git_branch_PS1
+  if [ -n "$_gfx" ]; then
+    git_branch_PS1="\[\033[01;31m\]$_git_branch $_branch_sym:\[\033[00m\]"
+  else
+    git_branch_PS1="\[\033[01;31m\]$_git_branch:\[\033[00m\]"
+  fi
+
+  # Build venv icons
+  _build_venv_icons
+
+  PS1="$_ssh_PS1\n$working_dir\n$venv_icons$_green_arrow$git_branch_PS1$_white_text"
 }
 
-PROMPT_COMMAND="set_prompt"
+# Invalidate cache (call after git clone, init, etc)
+_prompt_cache_invalidate() {
+  unset "_dir_cache[$PWD]"
+}
+
+PROMPT_COMMAND="_set_prompt"
