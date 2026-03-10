@@ -123,8 +123,12 @@ _set_prompt() {
   [ -z "$cached" ] && cached="${_dir_cache[$PWD]}"
   IFS='|' read -r _git_root _superproject _ <<< "$cached"
 
-  # Get branch (can change without cd)
-  _read_branch
+  # Get branch (can change without cd) - if fails, git root is gone
+  if ! _read_branch; then
+    unset "_dir_cache[$PWD]"
+    _set_prompt
+    return
+  fi
 
   # Build paths using bash string ops (no readlink spawn)
   local git_curr_dir="${PWD#$_git_root}"
