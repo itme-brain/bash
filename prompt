@@ -61,7 +61,7 @@ check_venv() {
 
 set_git_dir() {
   if _has_graphics; then
-    project_icon=" "
+    project_icon=" "
   else
     project_icon="../"
   fi
