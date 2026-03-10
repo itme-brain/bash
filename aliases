@@ -1,0 +1,15 @@
+# Navigation
+alias cd='cd -L'
+
+# Search
+alias grep='grep --color'
+
+# Tree (uses eza if available)
+if command -v eza &>/dev/null; then
+  alias tree='eza --tree --icons=never'
+fi
+
+# Open (graphical environment only)
+if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+  alias open='xdg-open'
+fi
