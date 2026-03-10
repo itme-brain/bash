@@ -12,7 +12,7 @@ else
   _js_sym="js"
   _nix_sym="nix"
   _proj_sym="../"
-  _branch_sym=""
+  _branch_sym="git"
 fi
 
 # Pre-compute colored icons
