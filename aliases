@@ -14,5 +14,3 @@ if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
   alias open='xdg-open'
 fi
 
-alias vi='/usr/bin/vim'
-alias vim='/usr/bin/nvim'
